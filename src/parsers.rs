@@ -115,8 +115,7 @@ fn body_text_segment(i: &str) -> IResult<&str, &str, VerboseError<&str>> {
             recognize(tuple((
                 verify(
                     take_until_either(&[
-                        Token::Escapable("{"),
-                        Token::Escapable("}"),
+                        Token::EscapableAndFollowedBy("{", "@"),
                         Token::Escapable("@"),
                         Token::NonEscapable("\r"),
                         Token::NonEscapable("\n"),
@@ -212,6 +211,7 @@ pub fn doc_comment(i: &str) -> IResult<&str, DocComment<'_>, VerboseError<&str>>
 #[derive(Debug)]
 enum Token<'a> {
     Escapable(&'a str),
+    EscapableAndFollowedBy(&'a str, &'a str),
     NonEscapable(&'a str),
 }
 
@@ -231,6 +231,11 @@ fn take_until_either<'a>(
             for token in tokens {
                 let found = match token {
                     Token::Escapable(t) => !escaping && input[i..].starts_with(t),
+                    Token::EscapableAndFollowedBy(t, f) => {
+                        !escaping
+                            && input[i..].starts_with(t)
+                            && input[i + t.len()..].trim_start().starts_with(f)
+                    }
                     Token::NonEscapable(t) => input[i..].starts_with(t),
                 };
                 if found {
@@ -522,9 +527,14 @@ mod tests {
     #[test]
     fn test_body_text_segment() {
         assert_eq!(body_text_segment("\n"), Ok(("", "\n")));
+        assert_eq!(body_text_segment("{"), Ok(("", "{")));
         assert_eq!(
             body_text_segment("Hello {@ world\n"),
             Ok(("{@ world\n", "Hello "))
+        );
+        assert_eq!(
+            body_text_segment("Hello { @ world\n"),
+            Ok(("{ @ world\n", "Hello "))
         );
         assert_eq!(
             body_text_segment("Hello */ world"),
@@ -567,16 +577,6 @@ mod tests {
                     ("   \t ", VerboseErrorKind::Nom(ErrorKind::Verify)),
                     ("   \t ", VerboseErrorKind::Nom(ErrorKind::Alt)),
                     ("   \t ", VerboseErrorKind::Context("body_text_segment"))
-                ]
-            }))
-        );
-        assert_eq!(
-            body_text_segment("{"),
-            Err(NomErr::Error(VerboseError {
-                errors: vec![
-                    ("{", VerboseErrorKind::Nom(ErrorKind::Verify)),
-                    ("{", VerboseErrorKind::Nom(ErrorKind::Alt)),
-                    ("{", VerboseErrorKind::Context("body_text_segment"))
                 ]
             }))
         );
@@ -744,6 +744,15 @@ mod tests {
                     })]
                 }
             ))
+        );
+    }
+
+    #[test]
+    fn test_false_inline_tag() {
+        assert_eq!(body("{}"), Ok(("", vec![BodyItem::TextSegment("{}")])));
+        assert_eq!(
+            body("Hello world {}"),
+            Ok(("", vec![BodyItem::TextSegment("Hello world {}")]))
         );
     }
 
